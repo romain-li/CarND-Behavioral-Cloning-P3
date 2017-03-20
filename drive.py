@@ -29,22 +29,27 @@ class SimplePIController:
         self.set_point = 0.
         self.error = 0.
         self.integral = 0.
+        self.last_steering_angle = 0.
 
     def set_desired(self, desired):
         self.set_point = desired
 
-    def update(self, measurement):
+    def update(self, measurement, steering_angle):
         # proportional error
         self.error = self.set_point - measurement
 
         # integral error
         self.integral += self.error
+        
+        # smooth steering
+        steering_angle = self.last_steering_angle * 0.5 + steering_angle
+        self.last_steering_angle = steering_angle
 
-        return self.Kp * self.error + self.Ki * self.integral
+        return self.Kp * self.error + self.Ki * self.integral, steering_angle
 
 
-controller = SimplePIController(0.1, 0.002)
-set_speed = 9
+controller = SimplePIController(0.05, 0.002)
+set_speed = 15
 controller.set_desired(set_speed)
 
 
@@ -61,11 +66,17 @@ def telemetry(sid, data):
         imgString = data["image"]
         image = Image.open(BytesIO(base64.b64decode(imgString)))
         image_array = np.asarray(image)
-        steering_angle = float(model.predict(image_array[None, :, :, :], batch_size=1))
+        result = model.predict(image_array[None, :, :, :], batch_size=1)
+        predict_steering_angle = result[0][0]
 
-        throttle = controller.update(float(speed))
+        throttle, steering_angle = controller.update(float(speed), predict_steering_angle)
+        if abs(steering_angle) > 0.05:
+            steering_angle = steering_angle * 2
+            controller.set_desired(set_speed / 2)
+        else:
+            controller.set_desired(set_speed)
 
-        print(steering_angle, throttle)
+        print(predict_steering_angle, steering_angle, throttle)
         send_control(steering_angle, throttle)
 
         # save frame
